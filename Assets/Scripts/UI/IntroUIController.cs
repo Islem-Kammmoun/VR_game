@@ -5,7 +5,8 @@ using VRGame.Core;
 namespace VRGame.UI
 {
     /// <summary>
-    /// Drives the intro panel. Hooks a start button to GameManager.StartGame().
+    /// Drives the intro panel. The Start button now shows the Mode panel
+    /// (Ask AI / Start Alone) rather than jumping straight into gameplay.
     /// </summary>
     public class IntroUIController : MonoBehaviour
     {
@@ -23,7 +24,7 @@ namespace VRGame.UI
 
         private void OnStartClicked()
         {
-            if (gameManager != null) gameManager.StartGame();
+            if (gameManager != null) gameManager.ShowModePanel();
         }
     }
 }
