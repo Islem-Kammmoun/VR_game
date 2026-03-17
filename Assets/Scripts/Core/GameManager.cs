@@ -7,21 +7,13 @@ using VRGame.UI;
 namespace VRGame.Core
 {
     /// <summary>
-    /// Manages game state transitions and coordinates all UI panels, route display,
-    /// waypoint teleportation, and player respawning.
-    ///
-    /// Desired behavior:
-    /// - Default AskAI (no verification): show WRONG route (because _useCorrectRoute starts false)
-    /// - If player presses Continue Anyway (no verification): force WRONG route and start following (Teleport Next)
-    /// - If player presses Verify Sources -> Look for Updated Sources:
-    ///     show VerificationProcessPanel messages, then unlock correct route and show RouteFollowPanel
-    ///     directly in FOLLOWING phase (text + Teleport Next only; no Continue Anyway / Verify Sources buttons)
-    /// - This must work even if player has never lost before.
-    /// - WinPanel has a "Play Again" button that restarts the run and shows the Intro panel (Option A).
-    ///
-    /// Note:
-    /// - verifyButtonObject can still be gated by _hasLostOnce (optional UX),
-    ///   but verification from RouteFollowPanel must work regardless.
+    /// Updated behavior:
+    /// - Keep your whole current flow (AskAI / Verify / Update sequence / routes).
+    /// - Replace the old LosePanel with ONLY the new one in the hole (LosePanel-1).
+    /// - Do NOT freeze the player on Lose (player can fall and then see LosePanel-1).
+    /// - Try Again on LosePanel-1 -> go back to Intro panel first (Option A).
+    /// - WinPanel Play Again also goes back to Intro (Option A).
+    /// - NEW: LosePanel-1 is ALWAYS SHOWN from the beginning (never disabled by GameManager).
     /// </summary>
     public class GameManager : MonoBehaviour
     {
@@ -41,7 +33,12 @@ namespace VRGame.Core
         [SerializeField] private GameObject introPanel;
         [SerializeField] private GameObject modePanel;
         [SerializeField] private GameObject winPanel;
-        [SerializeField] private GameObject losePanel;
+
+        [Header("Lose UI (LosePanel-1 ALWAYS SHOWN)")]
+        [Tooltip("Assign your new LosePanel-1 here (the one placed in the hole / lower ground).")]
+        [SerializeField] private GameObject losePanelLower;
+        [Tooltip("Optional: text inside LosePanel-1 for the reason message.")]
+        [SerializeField] private TMP_Text loseReasonText;
 
         [Header("Playing UI")]
         [SerializeField] private GameObject persistentAskAiPanel;
@@ -71,15 +68,11 @@ namespace VRGame.Core
         [SerializeField] private float routePanelDistance = 1.5f;
         [SerializeField] private float routePanelHeightOffset = -0.1f;
 
-        [Header("UI Snap (LosePanel)")]
-        [Tooltip("RectTransform of the LosePanel root to reposition/rotate when losing.")]
-        [SerializeField] private RectTransform losePanelRect;
+        [Header("UI Snap (LosePanel-1)")]
+        [Tooltip("Optional: RectTransform of LosePanel-1 root if you want it snapped in front of player on Lose.")]
+        [SerializeField] private RectTransform losePanelLowerRect;
         [SerializeField] private float losePanelDistance = 1.5f;
         [SerializeField] private float losePanelHeightOffset = -0.1f;
-
-        [Header("Lose text")]
-        [Tooltip("Text shown on LosePanel (reason).")]
-        [SerializeField] private TMP_Text loseReasonText;
 
         [Header("Update sequence timing")]
         [Tooltip("Seconds each message stays on screen during 'Look for Updated Sources'.")]
@@ -107,6 +100,9 @@ namespace VRGame.Core
 
             // Ensure process panel starts hidden
             SetActive(verificationProcessPanel, false);
+
+            // IMPORTANT: LosePanel-1 should ALWAYS be shown
+            SetActive(losePanelLower, true);
         }
 
         private void ValidateReferences()
@@ -117,7 +113,7 @@ namespace VRGame.Core
             if (introPanel == null) Debug.LogError("[GameManager] introPanel is not assigned.");
             if (modePanel == null) Debug.LogError("[GameManager] modePanel is not assigned.");
             if (winPanel == null) Debug.LogError("[GameManager] winPanel is not assigned.");
-            if (losePanel == null) Debug.LogError("[GameManager] losePanel is not assigned.");
+            if (losePanelLower == null) Debug.LogError("[GameManager] losePanelLower (LosePanel-1) is not assigned.");
 
             if (persistentAskAiPanel == null) Debug.LogError("[GameManager] persistentAskAiPanel is not assigned.");
             if (routeFollowPanel == null) Debug.LogError("[GameManager] routeFollowPanel is not assigned.");
@@ -131,7 +127,6 @@ namespace VRGame.Core
 
             if (xrCamera == null) Debug.LogWarning("[GameManager] xrCamera is not assigned (optional). Panel snapping will not work.");
             if (routeFollowPanelRect == null) Debug.LogWarning("[GameManager] routeFollowPanelRect is not assigned (optional). RouteFollowPanel snapping will not work.");
-            if (losePanelRect == null) Debug.LogWarning("[GameManager] losePanelRect is not assigned (optional). LosePanel snapping will not work.");
         }
 
         // ── Public API ──────────────────────────────────────────────────────────
@@ -147,10 +142,22 @@ namespace VRGame.Core
         }
 
         /// <summary>
-        /// Called by WinPanel "Play Again" button.
-        /// Option A: restart the run and show the Intro panel again.
+        /// WinPanel "Play Again" button: restart run and show Intro panel (Option A).
         /// </summary>
         public void PlayAgainFromWin()
+        {
+            RestartRunToIntro();
+        }
+
+        /// <summary>
+        /// LosePanel-1 "Try Again" button: restart run and show Intro panel (Option A).
+        /// </summary>
+        public void TryAgainFromLose()
+        {
+            RestartRunToIntro();
+        }
+
+        private void RestartRunToIntro()
         {
             // Stop update sequence if running
             if (_updateSourcesRoutine != null)
@@ -162,7 +169,7 @@ namespace VRGame.Core
             // Reset run (wrong route again until they verify)
             _useCorrectRoute = false;
 
-            // Hide overlays / process
+            // Hide overlays / process (DO NOT hide LosePanel-1)
             SetActive(routeFollowPanel, false);
             SetActive(verifySourcesPanel, false);
             SetActive(verificationProcessPanel, false);
@@ -174,10 +181,13 @@ namespace VRGame.Core
             // Respawn at spawn
             TeleportPlayerToSpawn();
 
-            // Ensure movement enabled (Lose freezes)
+            // Ensure movement enabled (we no longer freeze on lose, but keep safe)
             SetPlayerMovementEnabled(true);
 
-            // IMPORTANT: show Intro panel again (Option A)
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+
+            // Intro panel again
             SetState(GameState.Intro);
         }
 
@@ -327,9 +337,15 @@ namespace VRGame.Core
             SetActive(verifySourcesPanel, false);
             SetActive(verificationProcessPanel, false);
 
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+
             SetState(GameState.Won);
         }
 
+        /// <summary>
+        /// Lose uses LosePanel-1 and does NOT freeze the player.
+        /// </summary>
         public void Lose(string reason)
         {
             if (_state != GameState.Playing) return;
@@ -343,30 +359,22 @@ namespace VRGame.Core
             if (loseReasonText != null)
                 loseReasonText.text = reason;
 
-            SetPlayerMovementEnabled(false);
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+
+            // Optional: snap LosePanel-1 in front of player camera.
+            SnapLosePanelLowerToView();
 
             SetState(GameState.Lost);
-            SnapLosePanelToView();
         }
 
         public void Respawn()
         {
+            // Not used by Try Again (Try Again goes to Intro), but kept for compatibility.
             if (xrOriginRoot == null || spawnPoint == null) return;
 
             SetPlayerMovementEnabled(true);
-
-            CharacterController cc = _characterController != null
-                ? _characterController
-                : xrOriginRoot.GetComponentInChildren<CharacterController>();
-
-            if (cc != null) cc.enabled = false;
-
-            xrOriginRoot.position = spawnPoint.position;
-            Vector3 euler = xrOriginRoot.eulerAngles;
-            xrOriginRoot.rotation = Quaternion.Euler(euler.x, spawnPoint.eulerAngles.y, euler.z);
-
-            if (cc != null) cc.enabled = true;
-
+            TeleportPlayerToSpawn();
             SetState(GameState.Playing);
         }
 
@@ -398,6 +406,7 @@ namespace VRGame.Core
             // Back to wrong route until they verify again
             _useCorrectRoute = false;
 
+            // Hide overlays/process only (do NOT hide LosePanel-1)
             SetActive(routeFollowPanel, false);
             SetActive(verifySourcesPanel, false);
             SetActive(verificationProcessPanel, false);
@@ -406,6 +415,9 @@ namespace VRGame.Core
             SetVerificationProcessText(string.Empty);
 
             TeleportPlayerToSpawn();
+
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
         }
 
         private void TeleportPlayerToSpawn()
@@ -466,10 +478,10 @@ namespace VRGame.Core
             SnapPanelToView(verificationProcessPanelRect, verificationPanelDistance, verificationPanelHeightOffset);
         }
 
-        private void SnapLosePanelToView()
+        private void SnapLosePanelLowerToView()
         {
-            if (losePanel == null || !losePanel.activeInHierarchy) return;
-            SnapPanelToView(losePanelRect, losePanelDistance, losePanelHeightOffset);
+            if (losePanelLowerRect == null || xrCamera == null) return;
+            SnapPanelToView(losePanelLowerRect, losePanelDistance, losePanelHeightOffset);
         }
 
         private void SetState(GameState newState)
@@ -483,11 +495,9 @@ namespace VRGame.Core
             SetActive(introPanel, _state == GameState.Intro);
             SetActive(modePanel, _state == GameState.ModeSelect);
             SetActive(winPanel, _state == GameState.Won);
-            SetActive(losePanel, _state == GameState.Lost);
+
             SetActive(persistentAskAiPanel, _state == GameState.Playing);
 
-            // Optional UX: only show verify button after first loss.
-            // IMPORTANT: this must NOT block verification from RouteFollowPanel.
             if (verifyButtonObject != null)
                 verifyButtonObject.SetActive(_hasLostOnce);
 
@@ -498,6 +508,10 @@ namespace VRGame.Core
                 SetActive(verificationProcessPanel, false);
                 HideRoute();
             }
+
+            // Ensure LosePanel-1 is ALWAYS shown
+            if (losePanelLower != null && !losePanelLower.activeSelf)
+                losePanelLower.SetActive(true);
         }
 
         private static void SetActive(GameObject go, bool active)

@@ -1,272 +1,220 @@
-# VR Game – Verify Before You Rely
+# VR Forest Route Game (Ask AI / Verify Sources)
 
-A VR navigation prototype built with **Unity 6000.2.10f1** and the **XR Interaction Toolkit**.
-The player wakes up in a forest and must find a water lake to survive. A rule-based AI assistant
-can give directions — but it initially offers the **wrong route** based on an outdated map.
-To win safely the player must question the AI's sources, choose to update them, and only then
-follow the corrected path to the lake.
+This is a Unity VR game where the player asks an “AI” for a route through a forest, then chooses whether to **follow the route immediately** (risking a wrong path) or **verify sources** to unlock the correct route.
 
----
+The gameplay is driven mainly by `Assets/Scripts/Core/GameManager.cs`, plus:
 
-## Gameplay Flow
-
-```
-IntroPanel ──[Start]──► ModePanel
-                           │
-              ┌────────────┴────────────┐
-        [Start Alone]             [Ask AI]
-              │                        │
-              ▼                        ▼
-          Playing ◄──────────── Playing + RouteFollowPanel
-        (free roam)              (wrong route W1→W4)
-              │                        │
-        (persistent Ask AI btn)   (teleport steps)
-              │                        │
-              └───────────────────► HoleTrigger
-                                        │
-                                    LosePanel
-                                        │
-                                   [Try Again]
-                                        │
-                                    Playing
-                              (Ask AI  +  Verify btn)
-                                        │
-                              [Verify Route & Sources]
-                                        │
-                                 VerifySourcesPanel
-                              "route based on 1974 map"
-                                   │         │
-                         [Update Source]  [Continue Anyway]
-                                   │         │
-                             correct route  wrong route
-                             C1→C5          W1→W4
-                                   │
-                               LakeTrigger
-                                   │
-                               WinPanel
-```
+- `RouteRenderer` (shows the visible route line: wrong vs correct)
+- `WaypointNavigator` (teleports the player waypoint-by-waypoint)
+- `RouteFollowPanelController` (controls the RouteFollow UI phases: decision vs following)
 
 ---
 
-## Unity Version
+## Core Concept
 
-```
-6000.2.10f1
-```
+The player gets navigation help from an in-game “AI”, but:
 
----
+- **Default (unverified) guidance is WRONG**
+- If the player **verifies sources**, the game shows a verification message sequence and then unlocks the **CORRECT route**
 
-## How to Open the Project
-
-1. Install **Unity 6000.2.10f1** from Unity Hub.
-2. In Unity Hub choose **Open → Add project from disk** and select this repository folder.
-3. Wait for Unity to import all assets (first open may take several minutes).
-4. Open the target scene:
-   **Assets/Scenes/VerifyBeforeYouRely_Level.unity**
+There is also a “lose hole” at waypoint **W4** (a trigger). The player can fall into it and find the lose UI panel in the lower level.
 
 ---
 
-## Scene Wiring – VerifyBeforeYouRely_Level
+## Game States
 
-Follow these steps in the Unity Editor to wire up the gameplay scripts.
+`GameManager.GameState`:
 
-### 1. Open the Scene
+- **Intro**: Intro UI panel shown
+- **ModeSelect**: Mode selection UI panel shown
+- **Playing**: main gameplay UI shown (Ask AI, route follow UI, etc.)
+- **Won**: Win panel shown
+- **Lost**: Lost state reached (LosePanel-1 is always shown in the scene, and the state is used for game logic/cleanup)
 
-```
-Assets/Scenes/VerifyBeforeYouRely_Level.unity
-```
-
-### 2. Tag the XR Origin as "Player"
-
-1. Select the **XR Origin** (or **XR Origin Hands (XR Rig)**) GameObject in the Hierarchy.
-2. In the Inspector, set **Tag** to `Player`.
-   > ⚠️ Only tag the XR Origin root — do **not** tag UI objects as Player.
-
-### 3. Create the PlayerSpawn Transform
-
-1. Create an empty GameObject named `PlayerSpawn`.
-2. Place it at the starting area.
-3. Rotate it so its blue (forward) arrow faces the intended starting direction.
-
-### 4. Create Trigger Zones
-
-#### HoleTrigger
-
-1. Create an empty GameObject named `HoleTrigger`.
-2. Add a **BoxCollider** → check **Is Trigger**.
-3. Position and scale it to cover the hole/pit area.
-
-#### LakeTrigger
-
-1. Create an empty GameObject named `LakeTrigger`.
-2. Add a **BoxCollider** → check **Is Trigger**.
-3. Position and scale it to cover the water lake area.
-
-### 5. Attach WinLoseTrigger Components
-
-1. Select `HoleTrigger` → **Add Component → VRGame.World → Win Lose Trigger**.
-   - **Type** = `Hole` | **Lose Reason** = `"You fell into a hole."`
-2. Select `LakeTrigger` → **Add Component → VRGame.World → Win Lose Trigger**.
-   - **Type** = `Lake`
-
-> `WinLoseTrigger` finds the `GameManager` automatically via `FindFirstObjectByType`.
-
-### 6. Create Route Waypoints
-
-#### Wrong route (W1 → W4, last point inside HoleTrigger)
-
-1. Create an empty GameObject named `RoutePointsWrong`.
-2. Add **four** child GameObjects named `W1`, `W2`, `W3`, `W4`.
-   - Place them to form a misleading path; put `W4` inside the `HoleTrigger` collider.
-
-#### Correct route (C1 → C5, last point inside LakeTrigger)
-
-1. Create an empty GameObject named `RoutePointsCorrect`.
-2. Add **five** child GameObjects named `C1`, `C2`, `C3`, `C4`, `C5`.
-   - Place them along the safe path; put `C5` inside the `LakeTrigger` collider.
-
-### 7. Add the RouteRenderer *(optional — for visual route lines)*
-
-1. Create an empty GameObject named `RouteRenderer`.
-2. Add a **LineRenderer** component (set width and material as desired).
-3. Add Component → **VRGame.World → Route Renderer**.
-4. Assign:
-   - **Wrong Route Parent** → `RoutePointsWrong`
-   - **Correct Route Parent** → `RoutePointsCorrect`
-
-### 8. Add the WaypointNavigator
-
-1. Select (or create) the `GameManager` GameObject.
-2. Add Component → **VRGame.World → Waypoint Navigator**.
-3. Assign in the Inspector:
-   - **Xr Origin Root** → the XR Origin Transform (same as GameManager's field).
-   - **Wrong Route Parent** → `RoutePointsWrong`
-   - **Correct Route Parent** → `RoutePointsCorrect`
-
-### 9. Create the GameManager
-
-1. Create an empty GameObject named `GameManager` (or use the existing one).
-2. Add Component → **VRGame.Core → Game Manager**.
-3. Assign all serialized fields:
-
-   | Field | Value |
-   |-------|-------|
-   | **Xr Origin Root** | XR Origin Transform |
-   | **Spawn Point** | `PlayerSpawn` |
-   | **Route Renderer** *(optional)* | `RouteRenderer` GameObject |
-   | **Waypoint Navigator** | the `WaypointNavigator` component (step 8) |
-   | **Intro Panel** | `IntroPanel` GameObject |
-   | **Mode Panel** | `ModePanel` GameObject |
-   | **Win Panel** | `WinPanel` GameObject |
-   | **Lose Panel** | `LosePanel` GameObject |
-   | **Persistent Ask Ai Panel** | `PersistentAskAiPanel` GameObject |
-   | **Verify Button Object** | the Verify button's *GameObject* inside PersistentAskAiPanel |
-   | **Route Follow Panel** | `RouteFollowPanel` GameObject |
-   | **Verify Sources Panel** | `VerifySourcesPanel` GameObject |
-   | **Status Text** *(optional)* | a `TMP_Text` inside `LosePanel` |
-
-### 10. Create the UI Canvas and Panels
-
-> Recommended: use a **World Space** canvas in front of the player, or
-> **Screen Space – Overlay** for quick prototyping.
-
-#### IntroPanel
-
-1. In your Canvas create a child Panel named `IntroPanel`.
-2. Add a `TextMeshPro - Text (UI)` with your intro story.
-3. Add a **Button** named `StartButton`.
-4. Add Component → **VRGame.UI → Intro UI Controller**.
-5. Assign **Game Manager** and **Start Button**.
-
-#### ModePanel *(new)*
-
-1. Create a child Panel named `ModePanel` (starts **inactive** — GameManager activates it).
-2. Add a `TextMeshPro - Text (UI)` label, e.g. *"How do you want to proceed?"*.
-3. Add a **Button** named `AskAiButton` (label: *"Ask AI for help"*).
-4. Add a **Button** named `StartAloneButton` (label: *"Start alone"*).
-5. Add Component → **VRGame.UI → Mode Panel Controller**.
-6. Assign **Game Manager**, **Ask Ai Button**, **Start Alone Button**.
-
-#### PersistentAskAiPanel *(new)*
-
-1. Create a child Panel named `PersistentAskAiPanel` (starts **inactive**).
-2. Add a **Button** named `AskAiButton` (label: *"Ask AI"*).
-3. Add a child **Button** named `VerifyButton` (label: *"Verify route and sources"*) —
-   start this GameObject **inactive** (GameManager re-enables it after first loss).
-4. Add Component → **VRGame.UI → Persistent Ask Ai Panel Controller**.
-5. Assign **Game Manager**, **Ask Ai Button**, **Verify Button**.
-6. In `GameManager` Inspector drag `VerifyButton`'s *GameObject* to **Verify Button Object**.
-
-#### RouteFollowPanel *(new)*
-
-1. Create a child Panel named `RouteFollowPanel` (starts **inactive**).
-2. Add a `TextMeshPro - Text (UI)` with the message:
-   *"Follow this route to get to the lake."*
-3. Add a **Button** named `NextWaypointButton` (label: *"Next waypoint"*).
-4. Add an optional **Button** named `CloseButton` (label: *"Close"*).
-5. Add Component → **VRGame.UI → Route Follow Panel Controller**.
-6. Assign **Game Manager**, **Next Waypoint Button**, (optional) **Close Button**.
-
-#### VerifySourcesPanel *(new)*
-
-1. Create a child Panel named `VerifySourcesPanel` (starts **inactive**).
-2. Add a `TextMeshPro - Text (UI)` with the message:
-   *"This route was based on the forest map uploaded by a visitor in 1974."*
-3. Add a **Button** named `UpdateSourceButton`
-   (label: *"Update source and give me new route"*).
-4. Add a **Button** named `ContinueAnywayButton` (label: *"Continue anyway"*).
-5. Add Component → **VRGame.UI → Verify Sources Panel Controller**.
-6. Assign **Game Manager**, **Update Source Button**, **Continue Anyway Button**.
-
-#### WinPanel
-
-1. Create a child Panel named `WinPanel` (starts **inactive**).
-2. Add a label: *"You found the lake! You survived!"*
-3. Add a **Button** named `TryAgainButton`.
-4. Add Component → **VRGame.UI → Result UI Controller**.
-5. Assign **Game Manager** and **Try Again Button**.
-
-#### LosePanel
-
-1. Create a child Panel named `LosePanel` (starts **inactive**).
-2. Add a `TextMeshPro - Text (UI)` for the lose reason (drag to **Status Text** in GameManager).
-3. Add a **Button** named `TryAgainButton`.
-4. Add Component → **VRGame.UI → Result UI Controller**.
-5. Assign **Game Manager** and **Try Again Button**.
+> Note: In the current setup, **LosePanel-1 is always active from the beginning**, but the game still uses `Lost` state to represent that the player lost.
 
 ---
 
-## Panel Visibility Summary
+## Main UI Panels
 
-| Panel | Visible when |
-|-------|-------------|
-| `IntroPanel` | State = **Intro** |
-| `ModePanel` | State = **ModeSelect** |
-| `PersistentAskAiPanel` | State = **Playing** |
-| `VerifyButton` (inside Persistent) | State = Playing **and** player has lost at least once |
-| `RouteFollowPanel` | Overlay — shown by `AskAI()`, hidden when last waypoint reached or closed |
-| `VerifySourcesPanel` | Overlay — shown by `ShowVerifySourcesPanel()` |
-| `WinPanel` | State = **Won** |
-| `LosePanel` | State = **Lost** |
+These are the “main screens” controlled by `GameManager.UpdatePanels()`:
 
----
+- `IntroPanel`
+- `ModePanel`
+- `WinPanel`
 
-## Build Settings
+Lose UI:
 
-The scene **VerifyBeforeYouRely_Level** is already included in
-`ProjectSettings/EditorBuildSettings.asset`.
+- **LosePanel-1** is placed in the hole/lower ground area and is configured to be **always shown** (always active).  
+  The Lose flow can optionally snap it in front of the player camera when a loss happens.
 
-If it is ever missing, add it manually via:
-**File → Build Settings → drag `Assets/Scenes/VerifyBeforeYouRely_Level.unity` into the list**.
+Overlay UI (shown during Playing):
+
+- `RouteFollowPanel`
+- `VerifySourcesPanel`
+- `VerificationProcessPanel`
 
 ---
 
-## Package Dependencies
+## Route System
 
-All required packages are already declared in `Packages/manifest.json`:
+There are two routes:
 
-- **XR Interaction Toolkit** – locomotion, hands, interactors
-- **TextMeshPro** – UI text
-- **XR Hands** – hand tracking
+- **Wrong route**: W1 → W4 (leads to the hole / lose trigger)
+- **Correct route**: C1 → C5 (unlocked after verification)
 
-No additional packages are needed.
+`RouteRenderer` is responsible for the route visualization:
+
+- `ShowWrongRoute()`
+- `ShowCorrectRoute()`
+- `Hide()`
+
+`WaypointNavigator` is responsible for teleport navigation:
+
+- `SetRoute(bool useCorrectRoute)`
+- `TeleportNext()`
+- `HasNextWaypoint`
+
+---
+
+## Game Flow (Step-by-Step)
+
+### 1) Start / Intro
+
+- Game starts in **Intro** state.
+- `IntroPanel` is shown.
+- Player is typically at the spawn location.
+
+### 2) Start Playing
+
+- UI action calls `GameManager.StartAlone()` (or similar), which sets state to **Playing**.
+- `persistentAskAiPanel` becomes visible.
+
+### 3) Ask AI (Default = Wrong Route)
+
+- Player presses **Ask AI** button.
+- `GameManager.AskAI()` runs:
+  - Sets state to **Playing** (if not already)
+  - Selects route based on `_useCorrectRoute`
+  - By default `_useCorrectRoute = false` → WRONG route is selected
+  - Shows `RouteFollowPanel` in **Decision phase** (handled by `RouteFollowPanelController.OnEnable()`)
+
+### 4) Decision Phase (RouteFollowPanel)
+
+The player chooses one of these:
+
+#### A) Continue Anyway (No Verification)
+
+- Calls `GameManager.ForceWrongRouteAndOpenFollow()`
+- Forces `_useCorrectRoute = false`
+- Shows wrong route visualization
+- Forces `RouteFollowPanelController.EnterFollowingPhase()`
+  - This makes the panel show **Teleport Next** (following phase)
+
+#### B) Verify Sources
+
+- Calls `GameManager.ShowVerifySourcesPanel()`
+- Hides `RouteFollowPanel`
+- Opens `VerifySourcesPanel`
+
+### 5) VerifySourcesPanel → Look for Updated Sources
+
+- Calls `GameManager.UpdateSourceAndNewRoute()`
+- Runs a timed message sequence inside `VerificationProcessPanel`:
+  1. “Looking for newer information in the forest signs…”
+  2. “Attention: holes next to rocks.”
+  3. “Updating sources…”
+- After the sequence:
+  - `_useCorrectRoute = true`
+  - `AskAI()` is called (to open the route follow UI)
+  - `EnterFollowingPhase()` is forced so the panel is **Follow phase only**
+    - “text + Teleport Next only”
+    - no Continue Anyway / Verify buttons
+
+### 6) Following Phase (Teleportation)
+
+- Player uses **Teleport Next**.
+- `GameManager.TeleportNextWaypoint()`:
+  - Teleports to the next waypoint
+  - Keeps the RouteFollowPanel snapped in front of the player
+  - Closes the panel when there are no more waypoints
+
+### 7) Win Condition
+
+- When the correct route is completed (C5), game triggers:
+  - `GameManager.Win()`
+  - State becomes **Won**
+  - `WinPanel` is shown
+
+### 8) Play Again (WinPanel)
+
+- `WinPanel` has a **Play Again** button:
+  - OnClick → `GameManager.PlayAgainFromWin()`
+- This resets the run and returns to **Intro** (Option A).
+
+---
+
+## Lose Flow (Hole at W4)
+
+- Waypoint **W4** is a hole trigger that causes a loss.
+- When losing, game triggers:
+  - `GameManager.Lose(reason)`
+  - `_hasLostOnce = true`
+  - State becomes **Lost**
+  - The lose reason text can be written into LosePanel-1 (`loseReasonText`)
+  - Optionally the LosePanel-1 is snapped in front of the player (if a RectTransform is assigned)
+
+### Try Again (LosePanel-1)
+
+- LosePanel-1 has a **Try Again** button:
+  - OnClick → `GameManager.TryAgainFromLose()`
+- This resets the run and returns to **Intro** (Option A).
+
+---
+
+## Inspector Setup Checklist (Important)
+
+### GameManager references
+
+Assign these in the Unity Inspector:
+
+- Player:
+  - `xrOriginRoot`
+  - `spawnPoint`
+- UI panels:
+  - `introPanel`
+  - `modePanel`
+  - `winPanel`
+- Lose panel:
+  - `losePanelLower` = LosePanel-1
+  - `loseReasonText` (optional)
+  - `losePanelLowerRect` (optional; only if you want snapping)
+- Overlay panels:
+  - `routeFollowPanel`
+  - `verifySourcesPanel`
+  - `verificationProcessPanel`
+  - `verificationProcessPanelRect`
+  - `verificationProcessText`
+- Snapping:
+  - `xrCamera`
+  - `routeFollowPanelRect`
+
+### Button wiring
+
+- Ask AI button → `GameManager.AskAI()`
+- RouteFollowPanel Continue Anyway → `GameManager.ForceWrongRouteAndOpenFollow()`
+- RouteFollowPanel Verify Sources → `GameManager.ShowVerifySourcesPanel()`
+- VerifySourcesPanel Look for Updated Sources → `GameManager.UpdateSourceAndNewRoute()`
+- RouteFollowPanel Teleport Next → `GameManager.TeleportNextWaypoint()`
+- WinPanel Play Again → `GameManager.PlayAgainFromWin()`
+- LosePanel-1 Try Again → `GameManager.TryAgainFromLose()`
+
+---
+
+## Notes / Design Intent
+
+- The “signs” in the forest are assumed to exist in the world; the game **does not enable/disable sign GameObjects**.
+- The “verification” is represented through the **VerificationProcessPanel** message sequence, then switching routes.
+- The “wrong route” is intended to teach the player to verify sources.
+
+---
