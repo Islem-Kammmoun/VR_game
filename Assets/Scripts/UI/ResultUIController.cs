@@ -6,8 +6,8 @@ namespace VRGame.UI
 {
     /// <summary>
     /// Drives the win/lose result panels.
-    /// Try Again respawns the player and resumes gameplay.
-    /// Back to Intro (optional) returns to the intro panel.
+    /// Try Again restarts the experience by returning to the Intro flow.
+    /// Back to Intro (optional) also returns to the intro panel.
     /// </summary>
     public class ResultUIController : MonoBehaviour
     {
@@ -27,10 +27,13 @@ namespace VRGame.UI
                 backToIntroButton.onClick.AddListener(OnBackToIntro);
         }
 
-        /// <summary>Respawns the player at the spawn point and returns to Playing state.</summary>
+        /// <summary>
+        /// Restarts the UI flow (Intro -> Mode -> Ask AI...).
+        /// Use this if you want panels to show again, not just respawn in-place.
+        /// </summary>
         private void OnTryAgain()
         {
-            if (gameManager != null) gameManager.Respawn();
+            if (gameManager != null) gameManager.ShowIntro();
         }
 
         /// <summary>Returns to the intro screen (optional flow).</summary>

@@ -20,6 +20,10 @@ namespace VRGame.World
         [Tooltip("Parent of C1..C5 – correct route ending at the lake.")]
         [SerializeField] private Transform correctRouteParent;
 
+        [Header("Teleport Facing")]
+        [Tooltip("If true, the player will face the waypoint's rotation after teleport.")]
+        [SerializeField] private bool applyWaypointRotation = true;
+
         private Transform[] _waypoints = new Transform[0];
         private int _currentIndex;
         private CharacterController _characterController;
@@ -81,12 +85,22 @@ namespace VRGame.World
 
             if (xrOriginRoot == null) return;
 
-            Vector3 targetPosition = _waypoints[_currentIndex].position;
+            Transform wp = _waypoints[_currentIndex];
+            Vector3 targetPosition = wp.position;
 
             // Disable CharacterController around the teleport to avoid physics conflicts.
             if (_characterController != null) _characterController.enabled = false;
 
-            xrOriginRoot.position = targetPosition;
+            if (applyWaypointRotation)
+            {
+                // Use the waypoint's rotation to control where the player will face after teleport.
+                Quaternion targetRotation = wp.rotation;
+                xrOriginRoot.SetPositionAndRotation(targetPosition, targetRotation);
+            }
+            else
+            {
+                xrOriginRoot.position = targetPosition;
+            }
 
             if (_characterController != null) _characterController.enabled = true;
 

@@ -1,12 +1,19 @@
 using UnityEngine;
 using TMPro;
+using System.Collections;
 using VRGame.World;
+using VRGame.UI;
 
 namespace VRGame.Core
 {
     /// <summary>
-    /// Manages game state transitions and coordinates all UI panels, route display,
-    /// waypoint teleportation, and player respawning for the Verify-Before-You-Rely flow.
+    /// Updated behavior:
+    /// - Keep your whole current flow (AskAI / Verify / Update sequence / routes).
+    /// - Replace the old LosePanel with ONLY the new one in the hole (LosePanel-1).
+    /// - Do NOT freeze the player on Lose (player can fall and then see LosePanel-1).
+    /// - Try Again on LosePanel-1 -> go back to Intro panel first (Option A).
+    /// - WinPanel Play Again also goes back to Intro (Option A).
+    /// - NEW: LosePanel-1 is ALWAYS SHOWN from the beginning (never disabled by GameManager).
     /// </summary>
     public class GameManager : MonoBehaviour
     {
@@ -26,155 +33,403 @@ namespace VRGame.Core
         [SerializeField] private GameObject introPanel;
         [SerializeField] private GameObject modePanel;
         [SerializeField] private GameObject winPanel;
-        [SerializeField] private GameObject losePanel;
+
+        [Header("Lose UI (LosePanel-1 ALWAYS SHOWN)")]
+        [Tooltip("Assign your new LosePanel-1 here (the one placed in the hole / lower ground).")]
+        [SerializeField] private GameObject losePanelLower;
+        [Tooltip("Optional: text inside LosePanel-1 for the reason message.")]
+        [SerializeField] private TMP_Text loseReasonText;
 
         [Header("Playing UI")]
         [SerializeField] private GameObject persistentAskAiPanel;
-        [SerializeField] private GameObject verifyButtonObject; // child of persistentAskAiPanel; shown only after first loss
+        [SerializeField] private GameObject verifyButtonObject; // optional UX
 
         [Header("Overlay Panels")]
         [SerializeField] private GameObject routeFollowPanel;
         [SerializeField] private GameObject verifySourcesPanel;
 
-        [Header("Status (optional)")]
-        [SerializeField] private TMP_Text statusText;
+        [Header("Verification Process Panel")]
+        [Tooltip("Panel shown while 'Look for Updated Sources' sequence runs.")]
+        [SerializeField] private GameObject verificationProcessPanel;
+        [Tooltip("RectTransform of the VerificationProcessPanel root (for snapping).")]
+        [SerializeField] private RectTransform verificationProcessPanelRect;
+        [Tooltip("TMP text inside VerificationProcessPanel.")]
+        [SerializeField] private TMP_Text verificationProcessText;
+        [SerializeField] private float verificationPanelDistance = 1.5f;
+        [SerializeField] private float verificationPanelHeightOffset = -0.1f;
+
+        [Header("UI Snap (shared)")]
+        [Tooltip("XR Origin Main Camera Transform. Used to snap panels into view.")]
+        [SerializeField] private Transform xrCamera;
+
+        [Header("UI Snap (RouteFollowPanel)")]
+        [Tooltip("RectTransform of the RouteFollowPanel root to reposition/rotate.")]
+        [SerializeField] private RectTransform routeFollowPanelRect;
+        [SerializeField] private float routePanelDistance = 1.5f;
+        [SerializeField] private float routePanelHeightOffset = -0.1f;
+
+        [Header("UI Snap (LosePanel-1)")]
+        [Tooltip("Optional: RectTransform of LosePanel-1 root if you want it snapped in front of player on Lose.")]
+        [SerializeField] private RectTransform losePanelLowerRect;
+        [SerializeField] private float losePanelDistance = 1.5f;
+        [SerializeField] private float losePanelHeightOffset = -0.1f;
+
+        [Header("Update sequence timing")]
+        [Tooltip("Seconds each message stays on screen during 'Look for Updated Sources'.")]
+        [SerializeField] private float messageDurationSeconds = 10f;
 
         private GameState _state = GameState.Intro;
+
+        // Optional UX only (do NOT use this to gate whether verification works).
         private bool _hasLostOnce = false;
+
+        // Wrong route by default, correct route only after verification/update completes.
         private bool _useCorrectRoute = false;
+
+        private CharacterController _characterController;
+
+        // Prevent stacking multiple update sequences if button clicked multiple times.
+        private Coroutine _updateSourcesRoutine;
 
         private void Start()
         {
+            _characterController = xrOriginRoot != null ? xrOriginRoot.GetComponentInChildren<CharacterController>() : null;
+
             ValidateReferences();
             SetState(GameState.Intro);
+
+            // Ensure process panel starts hidden
+            SetActive(verificationProcessPanel, false);
+
+            // IMPORTANT: LosePanel-1 should ALWAYS be shown
+            SetActive(losePanelLower, true);
         }
 
         private void ValidateReferences()
         {
             if (xrOriginRoot == null) Debug.LogError("[GameManager] xrOriginRoot is not assigned.");
             if (spawnPoint == null) Debug.LogError("[GameManager] spawnPoint is not assigned.");
+
             if (introPanel == null) Debug.LogError("[GameManager] introPanel is not assigned.");
             if (modePanel == null) Debug.LogError("[GameManager] modePanel is not assigned.");
             if (winPanel == null) Debug.LogError("[GameManager] winPanel is not assigned.");
-            if (losePanel == null) Debug.LogError("[GameManager] losePanel is not assigned.");
+            if (losePanelLower == null) Debug.LogError("[GameManager] losePanelLower (LosePanel-1) is not assigned.");
+
             if (persistentAskAiPanel == null) Debug.LogError("[GameManager] persistentAskAiPanel is not assigned.");
             if (routeFollowPanel == null) Debug.LogError("[GameManager] routeFollowPanel is not assigned.");
             if (verifySourcesPanel == null) Debug.LogError("[GameManager] verifySourcesPanel is not assigned.");
+
+            if (verificationProcessPanel == null) Debug.LogWarning("[GameManager] verificationProcessPanel is not assigned. Update sequence messages won't show.");
+            if (verificationProcessText == null) Debug.LogWarning("[GameManager] verificationProcessText is not assigned.");
+            if (verificationProcessPanelRect == null) Debug.LogWarning("[GameManager] verificationProcessPanelRect is not assigned.");
+
             if (waypointNavigator == null) Debug.LogWarning("[GameManager] waypointNavigator is not assigned; teleportation will not work.");
+
+            if (xrCamera == null) Debug.LogWarning("[GameManager] xrCamera is not assigned (optional). Panel snapping will not work.");
+            if (routeFollowPanelRect == null) Debug.LogWarning("[GameManager] routeFollowPanelRect is not assigned (optional). RouteFollowPanel snapping will not work.");
         }
 
         // ── Public API ──────────────────────────────────────────────────────────
 
-        /// <summary>Called by the Start button on the Intro panel. Shows the mode-selection panel.</summary>
         public void ShowModePanel()
         {
             SetState(GameState.ModeSelect);
         }
 
-        /// <summary>Called by "Start Alone" on the Mode panel. Enters Playing state without showing a route.</summary>
         public void StartAlone()
         {
             SetState(GameState.Playing);
         }
 
         /// <summary>
-        /// Called by any "Ask AI" button (Mode panel or persistent panel).
-        /// Enters Playing state if not already, initialises the waypoint route,
-        /// and shows the RouteFollow overlay panel.
+        /// WinPanel "Play Again" button: restart run and show Intro panel (Option A).
+        /// </summary>
+        public void PlayAgainFromWin()
+        {
+            RestartRunToIntro();
+        }
+
+        /// <summary>
+        /// LosePanel-1 "Try Again" button: restart run and show Intro panel (Option A).
+        /// </summary>
+        public void TryAgainFromLose()
+        {
+            RestartRunToIntro();
+        }
+
+        private void RestartRunToIntro()
+        {
+            // Stop update sequence if running
+            if (_updateSourcesRoutine != null)
+            {
+                StopCoroutine(_updateSourcesRoutine);
+                _updateSourcesRoutine = null;
+            }
+
+            // Reset run (wrong route again until they verify)
+            _useCorrectRoute = false;
+
+            // Hide overlays / process (DO NOT hide LosePanel-1)
+            SetActive(routeFollowPanel, false);
+            SetActive(verifySourcesPanel, false);
+            SetActive(verificationProcessPanel, false);
+            SetVerificationProcessText(string.Empty);
+
+            // Hide route visual
+            HideRoute();
+
+            // Respawn at spawn
+            TeleportPlayerToSpawn();
+
+            // Ensure movement enabled (we no longer freeze on lose, but keep safe)
+            SetPlayerMovementEnabled(true);
+
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+
+            // Intro panel again
+            SetState(GameState.Intro);
+        }
+
+        /// <summary>
+        /// AskAI opens RouteFollowPanel in Decision phase (Continue Anyway + Verify Sources).
         /// </summary>
         public void AskAI()
         {
             if (_state != GameState.Playing)
                 SetState(GameState.Playing);
 
+            // Close verify-related panels when asking AI
+            SetActive(verifySourcesPanel, false);
+            SetActive(verificationProcessPanel, false);
+
+            Debug.Log($"[GameManager] AskAI: useCorrectRoute={_useCorrectRoute}");
+
+            // Prepare navigator route
             if (waypointNavigator != null)
                 waypointNavigator.SetRoute(_useCorrectRoute);
 
-            // Optionally render the route line.
+            // Show correct/wrong visualization
             if (_useCorrectRoute) ShowCorrectRoute();
             else ShowWrongRoute();
 
+            // Show route panel (Decision phase handled in RouteFollowPanelController.OnEnable())
             SetActive(routeFollowPanel, true);
+            SnapRouteFollowPanelToView();
         }
 
-        /// <summary>Closes the RouteFollow overlay without changing game state.</summary>
         public void CloseRouteFollowPanel()
         {
             SetActive(routeFollowPanel, false);
         }
 
-        /// <summary>
-        /// Advances the player to the next waypoint in the current route sequence.
-        /// Once all waypoints have been visited the RouteFollow panel is automatically
-        /// closed (the final teleport will typically fire a Win/Lose trigger anyway).
-        /// </summary>
         public void TeleportNextWaypoint()
         {
             if (waypointNavigator == null) return;
+
             waypointNavigator.TeleportNext();
-            // Auto-close the RouteFollow panel when the last waypoint is consumed;
-            // the final waypoint sits inside a Win/Lose trigger that handles state.
+            SnapRouteFollowPanelToView();
+
             if (!waypointNavigator.HasNextWaypoint)
                 CloseRouteFollowPanel();
         }
 
-        /// <summary>Whether there is still an unvisited waypoint in the current route.</summary>
         public bool HasNextWaypoint => waypointNavigator != null && waypointNavigator.HasNextWaypoint;
 
-        /// <summary>Shows the Verify Sources overlay panel.</summary>
         public void ShowVerifySourcesPanel()
         {
+            SetActive(routeFollowPanel, false);
+            SetActive(verificationProcessPanel, false);
             SetActive(verifySourcesPanel, true);
         }
 
         /// <summary>
-        /// "Update source and give me new route" button handler.
-        /// Switches to the correct route and opens the RouteFollow panel.
+        /// "Look for Updated Sources" button:
+        /// show VerificationProcessPanel messages one-by-one (10s each),
+        /// then unlock correct route and open RouteFollowPanel directly in FOLLOWING phase.
         /// </summary>
         public void UpdateSourceAndNewRoute()
         {
-            _useCorrectRoute = true;
             SetActive(verifySourcesPanel, false);
+            SetActive(routeFollowPanel, false);
+
+            if (_updateSourcesRoutine != null)
+                StopCoroutine(_updateSourcesRoutine);
+
+            _updateSourcesRoutine = StartCoroutine(UpdateSourcesSequence());
+        }
+
+        private IEnumerator UpdateSourcesSequence()
+        {
+            SetActive(verificationProcessPanel, true);
+            SnapVerificationProcessPanelToView();
+
+            SetVerificationProcessText("Looking for newer information in the forest signs…");
+            yield return new WaitForSeconds(messageDurationSeconds);
+
+            SnapVerificationProcessPanelToView();
+            SetVerificationProcessText("Attention: holes next to rocks.");
+            yield return new WaitForSeconds(messageDurationSeconds);
+
+            SnapVerificationProcessPanelToView();
+            SetVerificationProcessText("Updating sources…");
+            yield return new WaitForSeconds(messageDurationSeconds);
+
+            SetActive(verificationProcessPanel, false);
+
+            // Unlock correct route (NO LOSS REQUIRED)
+            _useCorrectRoute = true;
+            Debug.Log("[GameManager] Verification complete -> correct route unlocked");
+
+            // Open correct route panel
             AskAI();
+
+            // Force RouteFollowPanel into Following phase (Teleport Next only)
+            if (routeFollowPanel != null)
+            {
+                RouteFollowPanelController ctrl = routeFollowPanel.GetComponent<RouteFollowPanelController>();
+                if (ctrl != null)
+                    ctrl.EnterFollowingPhase();
+            }
+
+            _updateSourcesRoutine = null;
         }
 
         /// <summary>
-        /// "Continue anyway" button handler.
-        /// Keeps the wrong route and re-opens the RouteFollow panel.
+        /// Continue Anyway => wrong route + Following phase.
         /// </summary>
-        public void ContinueAnyway()
+        public void ForceWrongRouteAndOpenFollow()
         {
+            if (_state != GameState.Playing)
+                SetState(GameState.Playing);
+
+            _useCorrectRoute = false;
+
             SetActive(verifySourcesPanel, false);
-            AskAI();
+            SetActive(verificationProcessPanel, false);
+
+            if (waypointNavigator != null)
+                waypointNavigator.SetRoute(false);
+
+            ShowWrongRoute();
+
+            SetActive(routeFollowPanel, true);
+            SnapRouteFollowPanelToView();
+
+            if (routeFollowPanel != null)
+            {
+                RouteFollowPanelController ctrl = routeFollowPanel.GetComponent<RouteFollowPanelController>();
+                if (ctrl != null)
+                    ctrl.EnterFollowingPhase();
+            }
         }
 
-        /// <summary>Triggers the win state and shows the win panel.</summary>
+        public void ContinueAnyway()
+        {
+            ForceWrongRouteAndOpenFollow();
+        }
+
         public void Win()
         {
             if (_state != GameState.Playing) return;
+
             SetActive(routeFollowPanel, false);
             SetActive(verifySourcesPanel, false);
+            SetActive(verificationProcessPanel, false);
+
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+
             SetState(GameState.Won);
         }
 
-        /// <summary>Triggers the lose state with a reason string shown on the lose panel.</summary>
+        /// <summary>
+        /// Lose uses LosePanel-1 and does NOT freeze the player.
+        /// </summary>
         public void Lose(string reason)
         {
             if (_state != GameState.Playing) return;
+
             _hasLostOnce = true;
+
             SetActive(routeFollowPanel, false);
             SetActive(verifySourcesPanel, false);
-            if (statusText != null) statusText.text = reason;
+            SetActive(verificationProcessPanel, false);
+
+            if (loseReasonText != null)
+                loseReasonText.text = reason;
+
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+
+            // Optional: snap LosePanel-1 in front of player camera.
+            SnapLosePanelLowerToView();
+
             SetState(GameState.Lost);
         }
 
-        /// <summary>Teleports the player to the spawn point and resumes Playing state.</summary>
         public void Respawn()
+        {
+            // Not used by Try Again (Try Again goes to Intro), but kept for compatibility.
+            if (xrOriginRoot == null || spawnPoint == null) return;
+
+            SetPlayerMovementEnabled(true);
+            TeleportPlayerToSpawn();
+            SetState(GameState.Playing);
+        }
+
+        public void ShowWrongRoute()
+        {
+            if (routeRenderer != null) routeRenderer.ShowWrongRoute();
+        }
+
+        public void ShowCorrectRoute()
+        {
+            if (routeRenderer != null) routeRenderer.ShowCorrectRoute();
+        }
+
+        public void HideRoute()
+        {
+            if (routeRenderer != null) routeRenderer.Hide();
+        }
+
+        public void ShowIntro()
+        {
+            ResetToIntroRun();
+            SetState(GameState.Intro);
+        }
+
+        // ── Private helpers ─────────────────────────────────────────────────────
+
+        private void ResetToIntroRun()
+        {
+            // Back to wrong route until they verify again
+            _useCorrectRoute = false;
+
+            // Hide overlays/process only (do NOT hide LosePanel-1)
+            SetActive(routeFollowPanel, false);
+            SetActive(verifySourcesPanel, false);
+            SetActive(verificationProcessPanel, false);
+            HideRoute();
+
+            SetVerificationProcessText(string.Empty);
+
+            TeleportPlayerToSpawn();
+
+            // Keep LosePanel-1 always shown
+            SetActive(losePanelLower, true);
+        }
+
+        private void TeleportPlayerToSpawn()
         {
             if (xrOriginRoot == null || spawnPoint == null) return;
 
-            // Temporarily disable any CharacterController to avoid collision glitches.
-            CharacterController cc = xrOriginRoot.GetComponentInChildren<CharacterController>();
+            SetPlayerMovementEnabled(true);
+
+            CharacterController cc = _characterController != null
+                ? _characterController
+                : xrOriginRoot.GetComponentInChildren<CharacterController>();
+
             if (cc != null) cc.enabled = false;
 
             xrOriginRoot.position = spawnPoint.position;
@@ -182,35 +437,52 @@ namespace VRGame.Core
             xrOriginRoot.rotation = Quaternion.Euler(euler.x, spawnPoint.eulerAngles.y, euler.z);
 
             if (cc != null) cc.enabled = true;
-
-            SetState(GameState.Playing);
         }
 
-        /// <summary>Shows the wrong (old-map) route via the RouteRenderer.</summary>
-        public void ShowWrongRoute()
+        private void SetPlayerMovementEnabled(bool enabled)
         {
-            if (routeRenderer != null) routeRenderer.ShowWrongRoute();
+            if (_characterController != null)
+                _characterController.enabled = enabled;
         }
 
-        /// <summary>Shows the correct route via the RouteRenderer.</summary>
-        public void ShowCorrectRoute()
+        private void SetVerificationProcessText(string message)
         {
-            if (routeRenderer != null) routeRenderer.ShowCorrectRoute();
+            if (verificationProcessText != null)
+                verificationProcessText.text = message;
         }
 
-        /// <summary>Hides the route visualization.</summary>
-        public void HideRoute()
+        // ── Snapping helpers ────────────────────────────────────────────────────
+
+        private void SnapPanelToView(RectTransform panelRect, float distance, float heightOffset)
         {
-            if (routeRenderer != null) routeRenderer.Hide();
+            if (xrCamera == null || panelRect == null) return;
+
+            Vector3 pos = xrCamera.position + xrCamera.forward * distance + Vector3.up * heightOffset;
+            panelRect.position = pos;
+
+            Vector3 lookDir = panelRect.position - xrCamera.position;
+            lookDir.y = 0f;
+            if (lookDir.sqrMagnitude > 0.0001f)
+                panelRect.rotation = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
         }
 
-        /// <summary>Returns to the Intro state.</summary>
-        public void ShowIntro()
+        private void SnapRouteFollowPanelToView()
         {
-            SetState(GameState.Intro);
+            if (routeFollowPanel == null || !routeFollowPanel.activeInHierarchy) return;
+            SnapPanelToView(routeFollowPanelRect, routePanelDistance, routePanelHeightOffset);
         }
 
-        // ── Private helpers ─────────────────────────────────────────────────────
+        private void SnapVerificationProcessPanelToView()
+        {
+            if (verificationProcessPanel == null || !verificationProcessPanel.activeInHierarchy) return;
+            SnapPanelToView(verificationProcessPanelRect, verificationPanelDistance, verificationPanelHeightOffset);
+        }
+
+        private void SnapLosePanelLowerToView()
+        {
+            if (losePanelLowerRect == null || xrCamera == null) return;
+            SnapPanelToView(losePanelLowerRect, losePanelDistance, losePanelHeightOffset);
+        }
 
         private void SetState(GameState newState)
         {
@@ -223,20 +495,23 @@ namespace VRGame.Core
             SetActive(introPanel, _state == GameState.Intro);
             SetActive(modePanel, _state == GameState.ModeSelect);
             SetActive(winPanel, _state == GameState.Won);
-            SetActive(losePanel, _state == GameState.Lost);
+
             SetActive(persistentAskAiPanel, _state == GameState.Playing);
 
-            // The Verify button inside the persistent panel is only shown after the first loss.
             if (verifyButtonObject != null)
                 verifyButtonObject.SetActive(_hasLostOnce);
 
-            // Hide overlay panels whenever we leave Playing state.
             if (_state != GameState.Playing)
             {
                 SetActive(routeFollowPanel, false);
                 SetActive(verifySourcesPanel, false);
+                SetActive(verificationProcessPanel, false);
                 HideRoute();
             }
+
+            // Ensure LosePanel-1 is ALWAYS shown
+            if (losePanelLower != null && !losePanelLower.activeSelf)
+                losePanelLower.SetActive(true);
         }
 
         private static void SetActive(GameObject go, bool active)

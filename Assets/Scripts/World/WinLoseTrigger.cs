@@ -5,6 +5,7 @@ namespace VRGame.World
     /// <summary>
     /// Attach to a trigger collider. Calls GameManager.Win() for a lake trigger
     /// or GameManager.Lose() for a hole trigger when the player enters.
+    /// Also checks OnTriggerStay to handle teleporting/starting inside the trigger.
     /// </summary>
     [RequireComponent(typeof(Collider))]
     public class WinLoseTrigger : MonoBehaviour
@@ -15,6 +16,7 @@ namespace VRGame.World
         [SerializeField] private string loseReason = "You fell into a hole.";
 
         private Core.GameManager _gameManager;
+        private bool _fired;
 
         private void Start()
         {
@@ -31,10 +33,29 @@ namespace VRGame.World
             }
         }
 
+        private void OnEnable()
+        {
+            _fired = false;
+        }
+
         private void OnTriggerEnter(Collider other)
         {
+            TryFire(other);
+        }
+
+        private void OnTriggerStay(Collider other)
+        {
+            // Important for teleporting into the trigger (OnTriggerEnter may not fire).
+            TryFire(other);
+        }
+
+        private void TryFire(Collider other)
+        {
+            if (_fired) return;
             if (_gameManager == null) return;
             if (!IsPlayer(other.transform)) return;
+
+            _fired = true;
 
             switch (type)
             {
