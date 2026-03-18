@@ -3,6 +3,7 @@ using TMPro;
 using System.Collections;
 using VRGame.World;
 using VRGame.UI;
+using System;
 
 namespace VRGame.Core
 {
@@ -12,11 +13,25 @@ namespace VRGame.Core
     /// - Replace the old LosePanel with ONLY the new one in the hole (LosePanel-1).
     /// - Do NOT freeze the player on Lose (player can fall and then see LosePanel-1).
     /// - Try Again on LosePanel-1 -> go back to Intro panel first (Option A).
-    /// - WinPanel Play Again also goes back to Intro (Option A).
-    /// - NEW: LosePanel-1 is ALWAYS SHOWN from the beginning (never disabled by GameManager).
+    /// - WinPanel Play Again also goes back to Intro panel (Option A).
+    /// - LosePanel-1 is ALWAYS SHOWN from the beginning (never disabled by GameManager).
+    ///
+    /// FIX:
+    /// - Win panel not showing after 2nd time reaching C5:
+    ///   We must "reset" the win state when restarting (and ensure winPanel is disabled in Intro/Playing),
+    ///   plus make sure Win() always runs even if you were already in Won before.
+    ///
+    /// NEW:
+    /// - OnRunRestarted event: fired whenever a run restarts (Play Again / Try Again).
+    ///   WinLoseTrigger listens to this to reset its internal one-shot flag (_fired).
     /// </summary>
     public class GameManager : MonoBehaviour
     {
+        /// <summary>
+        /// Raised whenever the current "run" restarts, so one-shot triggers (lake/hole) can reset.
+        /// </summary>
+        public static event Action OnRunRestarted;
+
         public enum GameState { Intro, ModeSelect, Playing, Won, Lost }
 
         [Header("Player")]
@@ -96,13 +111,14 @@ namespace VRGame.Core
             _characterController = xrOriginRoot != null ? xrOriginRoot.GetComponentInChildren<CharacterController>() : null;
 
             ValidateReferences();
-            SetState(GameState.Intro);
 
             // Ensure process panel starts hidden
             SetActive(verificationProcessPanel, false);
 
             // IMPORTANT: LosePanel-1 should ALWAYS be shown
             SetActive(losePanelLower, true);
+
+            SetState(GameState.Intro);
         }
 
         private void ValidateReferences()
@@ -159,6 +175,9 @@ namespace VRGame.Core
 
         private void RestartRunToIntro()
         {
+            // NEW: reset one-shot triggers (lake/hole) and any other listeners
+            OnRunRestarted?.Invoke();
+
             // Stop update sequence if running
             if (_updateSourcesRoutine != null)
             {
@@ -175,13 +194,16 @@ namespace VRGame.Core
             SetActive(verificationProcessPanel, false);
             SetVerificationProcessText(string.Empty);
 
+            // IMPORTANT: make sure win panel is OFF immediately (so it can show again next win)
+            SetActive(winPanel, false);
+
             // Hide route visual
             HideRoute();
 
             // Respawn at spawn
             TeleportPlayerToSpawn();
 
-            // Ensure movement enabled (we no longer freeze on lose, but keep safe)
+            // Ensure movement enabled
             SetPlayerMovementEnabled(true);
 
             // Keep LosePanel-1 always shown
@@ -202,8 +224,6 @@ namespace VRGame.Core
             // Close verify-related panels when asking AI
             SetActive(verifySourcesPanel, false);
             SetActive(verificationProcessPanel, false);
-
-            Debug.Log($"[GameManager] AskAI: useCorrectRoute={_useCorrectRoute}");
 
             // Prepare navigator route
             if (waypointNavigator != null)
@@ -279,7 +299,6 @@ namespace VRGame.Core
 
             // Unlock correct route (NO LOSS REQUIRED)
             _useCorrectRoute = true;
-            Debug.Log("[GameManager] Verification complete -> correct route unlocked");
 
             // Open correct route panel
             AskAI();
@@ -331,14 +350,13 @@ namespace VRGame.Core
 
         public void Win()
         {
-            if (_state != GameState.Playing) return;
-
             SetActive(routeFollowPanel, false);
             SetActive(verifySourcesPanel, false);
             SetActive(verificationProcessPanel, false);
 
-            // Keep LosePanel-1 always shown
-            SetActive(losePanelLower, true);
+            // Ensure win panel toggles off->on if needed
+            if (winPanel != null && winPanel.activeSelf)
+                winPanel.SetActive(false);
 
             SetState(GameState.Won);
         }
@@ -418,6 +436,9 @@ namespace VRGame.Core
 
             // Keep LosePanel-1 always shown
             SetActive(losePanelLower, true);
+
+            // Ensure win panel is off in intro
+            SetActive(winPanel, false);
         }
 
         private void TeleportPlayerToSpawn()
