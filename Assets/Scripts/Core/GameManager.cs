@@ -24,6 +24,10 @@ namespace VRGame.Core
     /// NEW:
     /// - OnRunRestarted event: fired whenever a run restarts (Play Again / Try Again).
     ///   WinLoseTrigger listens to this to reset its internal one-shot flag (_fired).
+    ///
+    /// NEW (Restart button support):
+    /// - RestartToIntroFromAnywhere(): can be called at any time (even while falling),
+    ///   and will restart back to Intro reliably.
     /// </summary>
     public class GameManager : MonoBehaviour
     {
@@ -155,6 +159,16 @@ namespace VRGame.Core
         public void StartAlone()
         {
             SetState(GameState.Playing);
+        }
+
+        /// <summary>
+        /// Global restart button: always restarts to Intro, regardless of current state.
+        /// Use this for a "Restart" button that must work even if the player is mid-fall,
+        /// or if Lose() hasn't been triggered yet.
+        /// </summary>
+        public void RestartToIntroFromAnywhere()
+        {
+            RestartRunToIntro();
         }
 
         /// <summary>
